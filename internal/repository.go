@@ -181,21 +181,56 @@ func SaveIndex(index []IndexEntry) error {
 }
 
 // AddFile adds a file to the index
+// AddFile adds a file to the index
 func AddFile(filePath string) error {
 	repo, err := FindGitterRepo()
 	if err != nil {
 		return err
 	}
 
-	// Handle glob patterns
+	// Handle glob patterns and directories
 	var files []string
-	if strings.Contains(filePath, "*") {
+
+	// Check if it's a directory
+	stat, err := os.Stat(filePath)
+	if err == nil && stat.IsDir() {
+		// It's a directory, add all files within it
+		err := filepath.Walk(filePath, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+
+			// Skip directories themselves
+			if info.IsDir() {
+				return nil
+			}
+
+			// Skip .gitter directory
+			if strings.Contains(path, GITTER_DIR) {
+				return nil
+			}
+
+			files = append(files, path)
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+	} else if strings.Contains(filePath, "*") {
+		// Handle glob patterns
 		matches, err := filepath.Glob(filePath)
 		if err != nil {
 			return err
 		}
-		files = matches
+		for _, match := range matches {
+			// Check if match is a file, not directory
+			stat, err := os.Stat(match)
+			if err == nil && !stat.IsDir() {
+				files = append(files, match)
+			}
+		}
 	} else {
+		// Single file
 		files = []string{filePath}
 	}
 
