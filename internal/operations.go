@@ -118,6 +118,7 @@ func ShowStatus() error {
 }
 
 // CommitChanges creates a new commit
+// CommitChanges creates a new commit
 func CommitChanges(message string, all bool) error {
 	repo, err := FindGitterRepo()
 	if err != nil {
@@ -185,13 +186,26 @@ func CommitChanges(message string, all bool) error {
 		return fmt.Errorf("nothing to commit")
 	}
 
+	// Create tree object and save it
+	treeData, err := json.Marshal(stagedFiles)
+	if err != nil {
+		return err
+	}
+	treeHash := CalculateHash(string(treeData))
+
+	// Save tree object to objects directory
+	treePath := filepath.Join(repo.GitDir, OBJECTS_DIR, treeHash)
+	if err := ioutil.WriteFile(treePath, treeData, 0644); err != nil {
+		return err
+	}
+
 	// Create commit object
 	commit := Commit{
 		Hash:     "",     // Will be calculated
 		Author:   "user", // You can make this configurable
 		Date:     time.Now(),
 		Message:  message,
-		TreeHash: "", // Calculate tree hash
+		TreeHash: treeHash, // Use the saved tree hash
 	}
 
 	// Get parent commit (current HEAD)
@@ -200,13 +214,6 @@ func CommitChanges(message string, all bool) error {
 		return err
 	}
 	commit.Parent = head
-
-	// Calculate tree hash (simplified - using index content)
-	treeData, err := json.Marshal(stagedFiles)
-	if err != nil {
-		return err
-	}
-	commit.TreeHash = CalculateHash(string(treeData))
 
 	// Calculate commit hash
 	commitData, err := json.Marshal(commit)
@@ -337,6 +344,7 @@ func ShowDiff(path string) error {
 }
 
 // showFileDiff displays diff for a single file
+// showFileDiff displays diff for a single file
 func showFileDiff(repo *Repository, commit Commit, filePath string) error {
 	// Get current file content
 	currentPath := filepath.Join(repo.WorkingDir, filePath)
@@ -349,38 +357,33 @@ func showFileDiff(repo *Repository, commit Commit, filePath string) error {
 		return err
 	}
 
-	// Get file hash from commit's tree
-	// This is simplified - in a real implementation, you'd parse the tree object
+	// Get the tree data from the commit
 	var headContent []byte
 
-	// For this simplified version, we'll just get the file from objects if it exists
-	hash, err := hashFile(currentPath)
+	// Parse the tree hash to find the file
+	// Since our implementation stores the tree as JSON of staged files at commit time,
+	// we need to load the tree and find the file hash
+	treePath := filepath.Join(repo.GitDir, OBJECTS_DIR, commit.TreeHash)
+	treeData, err := ioutil.ReadFile(treePath)
 	if err != nil {
-		return err
-	}
-
-	// Try to find the file in HEAD
-	// This is a simplified approach - traverse all objects to find matching file
-	objectsDir := filepath.Join(repo.GitDir, OBJECTS_DIR)
-	files, err := ioutil.ReadDir(objectsDir)
-	if err != nil {
-		return err
-	}
-
-	// Find the file in HEAD (simplified)
-	var headHash string
-	for _, f := range files {
-		if !f.IsDir() && strings.HasSuffix(f.Name(), hash) {
-			headHash = f.Name()
-			break
-		}
-	}
-
-	if headHash != "" {
-		headPath := filepath.Join(objectsDir, headHash)
-		headContent, err = ioutil.ReadFile(headPath)
-		if err != nil {
-			return err
+		// Tree might not exist in simple implementation, try to find file directly
+		headContent = []byte("") // Empty content for new files
+	} else {
+		// Parse tree data
+		var files []IndexEntry
+		if err := json.Unmarshal(treeData, &files); err == nil {
+			// Find the file in the tree
+			for _, file := range files {
+				if file.FilePath == filePath {
+					// Load the file content from objects
+					objectPath := filepath.Join(repo.GitDir, OBJECTS_DIR, file.Hash)
+					content, err := ioutil.ReadFile(objectPath)
+					if err == nil {
+						headContent = content
+					}
+					break
+				}
+			}
 		}
 	}
 
