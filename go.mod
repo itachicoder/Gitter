@@ -1,4 +1,4 @@
-module main.go
+module gitter
 
 go 1.24.1
 
